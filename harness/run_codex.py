@@ -138,6 +138,12 @@ def run_codex_cli(
         env = os.environ.copy()
         env['CODEX_UNSAFE_ALLOW_NO_SANDBOX'] = '1'
         
+        # Debug: verify OPENAI_API_KEY is present
+        if 'OPENAI_API_KEY' in env:
+            console.print(f"[green]OPENAI_API_KEY is set (length: {len(env['OPENAI_API_KEY'])})[/green]")
+        else:
+            console.print(f"[red]WARNING: OPENAI_API_KEY is NOT set![/red]")
+        
         # Prevent interactive editors from spawning
         env['EDITOR'] = '/usr/bin/true'
         env['VISUAL'] = '/usr/bin/true'
