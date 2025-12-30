@@ -117,11 +117,12 @@ def run_codex_cli(
 4. When done, the changes will be collected as a git diff
 """
 
-    # Build command with --quiet for non-interactive mode
-    cmd = ['codex']
+    # Build command with -q for non-interactive mode
+    # Use npx to ensure we get the npm-installed @openai/codex
+    cmd = ['npx', '--yes', '@openai/codex']
     
-    # CRITICAL: --quiet flag enables non-interactive mode (no TTY needed!)
-    cmd.append('--quiet')
+    # CRITICAL: -q flag enables non-interactive mode (no TTY needed!)
+    cmd.append('-q')
     
     # Add CLI flags from config
     for flag in config.get('cli_flags', []):
