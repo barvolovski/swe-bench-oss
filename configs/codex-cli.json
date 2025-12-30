@@ -8,8 +8,6 @@
   "environment": {
     "CODEX_UNSAFE_ALLOW_NO_SANDBOX": "1"
   },
-  "cli_flags": [
-    "--dangerously-bypass-approvals-and-sandbox"
-  ]
+  "cli_flags": []
 }
 

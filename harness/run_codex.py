@@ -78,7 +78,7 @@ def load_config(config_path: Optional[str]) -> Dict[str, Any]:
         'model': 'gpt-4.1',
         'approval_mode': 'full-auto',
         'timeout_minutes': 30,
-        'cli_flags': ['--full-auto', '--dangerously-auto-approve-everything'],
+        'cli_flags': [],
     }
 
 
