@@ -7,8 +7,8 @@ Runs OpenAI's Codex CLI on SWE-Bench tasks and collects results.
 import argparse
 import json
 import os
+import re
 import shutil
-import shlex
 import subprocess
 import sys
 import tempfile
@@ -16,6 +16,12 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+
+def _strip_ansi(text: str) -> str:
+    """Strip ANSI escape codes from text."""
+    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    return ansi_escape.sub('', text)
 
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -32,112 +38,35 @@ from utils import (
 
 console = Console()
 
-def _run_with_pty(cmd: List[str], cwd: Path, env: Dict[str, str], timeout_seconds: int, prompt: str) -> tuple[int, str]:
+def _run_codex_quiet(
+    cmd: List[str],
+    cwd: Path,
+    env: Dict[str, str],
+    timeout_seconds: int,
+) -> tuple[int, str]:
     """
-    Run Codex CLI attached to a pseudo-terminal (PTY), send prompt interactively, and capture output.
-
-    Why:
-    - `codex` uses Ink (terminal UI) which expects a TTY and also sends cursor-position
-      queries (ESC[6n). In CI there is no real terminal emulator to answer those, so
-      Ink times out with:
-        "Error: The cursor position could not be read within a normal duration"
-    - By running the process on a PTY and replying with a dummy cursor position
-      response (ESC[1;1R), we satisfy Ink without needing a real terminal emulator.
-    - Codex CLI waits for interactive input, so we detect when it's ready and send
-      the prompt via stdin, then press Enter to submit.
+    Run Codex CLI in --quiet mode (non-interactive, JSON output).
+    
+    This is the correct way to run codex in CI/automation:
+    - --quiet flag makes it non-interactive
+    - Output is JSON lines with the conversation
+    - No TTY required!
     """
-    import pty
-    import select
-
-    master_fd, slave_fd = pty.openpty()
-    start = time.time()
-    output = bytearray()
-    recent = bytearray()
-    prompt_sent = False
-
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(cwd),
-            env=env,
-            stdin=slave_fd,
-            stdout=slave_fd,
-            stderr=slave_fd,
-            text=False,
-            close_fds=True,
-        )
-    finally:
-        try:
-            os.close(slave_fd)
-        except Exception:
-            pass
-
-    try:
-        while True:
-            # Timeout handling
-            if time.time() - start > timeout_seconds:
-                proc.kill()
-                raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout_seconds)
-
-            # If process exited, drain remaining output then break
-            exited = proc.poll() is not None
-
-            rlist, _, _ = select.select([master_fd], [], [], 0.1)
-            if master_fd in rlist:
-                try:
-                    chunk = os.read(master_fd, 4096)
-                except OSError:
-                    chunk = b""
-
-                if chunk:
-                    output.extend(chunk)
-
-                    # Keep a small rolling buffer to detect patterns
-                    recent.extend(chunk)
-                    if len(recent) > 2048:
-                        recent = recent[-2048:]
-
-                    # Respond to cursor position queries (ESC[6n)
-                    if b"\x1b[6n" in recent:
-                        try:
-                            os.write(master_fd, b"\x1b[1;1R")
-                        except Exception:
-                            pass
-                        recent = recent.replace(b"\x1b[6n", b"")
-
-                    # Check if Codex is ready for input (look for common prompts)
-                    # Codex shows "send a message" or similar when ready
-                    recent_str = recent.decode("utf-8", errors="replace").lower()
-                    if not prompt_sent and ("send a message" in recent_str or 
-                                            "what would you like" in recent_str or
-                                            "how can i help" in recent_str or
-                                            # Also check for a simple prompt indicator after UI init
-                                            (time.time() - start > 3 and len(output) > 100)):
-                        # Give Codex a moment to fully initialize
-                        time.sleep(0.5)
-                        try:
-                            # Send the prompt
-                            os.write(master_fd, prompt.encode("utf-8"))
-                            time.sleep(0.2)
-                            # Press Enter to submit
-                            os.write(master_fd, b"\r")
-                            prompt_sent = True
-                            console.print(f"[green]Prompt sent ({len(prompt)} chars)[/green]")
-                        except Exception as e:
-                            console.print(f"[red]Failed to send prompt: {e}[/red]")
-
-                    continue
-
-            if exited:
-                break
-
-        returncode = proc.wait(timeout=5)
-        return returncode, output.decode("utf-8", errors="replace")
-    finally:
-        try:
-            os.close(master_fd)
-        except Exception:
-            pass
+    result = subprocess.run(
+        cmd,
+        cwd=str(cwd),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=timeout_seconds,
+    )
+    
+    # Combine stdout and stderr
+    output = result.stdout
+    if result.stderr:
+        output += "\n" + result.stderr
+    
+    return result.returncode, output
 
 
 def load_config(config_path: Optional[str]) -> Dict[str, Any]:
@@ -188,8 +117,11 @@ def run_codex_cli(
 4. When done, the changes will be collected as a git diff
 """
 
-    # Build command
+    # Build command with --quiet for non-interactive mode
     cmd = ['codex']
+    
+    # CRITICAL: --quiet flag enables non-interactive mode (no TTY needed!)
+    cmd.append('--quiet')
     
     # Add CLI flags from config
     for flag in config.get('cli_flags', []):
@@ -197,20 +129,23 @@ def run_codex_cli(
     
     # Add model
     cmd.extend(['--model', model])
+
+    # Set approval mode for full automation
+    approval_mode = config.get('approval_mode', 'full-auto')
+    cmd.extend(['--approval-mode', str(approval_mode)])
     
-    # Don't pass prompt as CLI arg - we'll send it interactively via PTY
-    # (Codex CLI ignores CLI prompt when in interactive/Ink mode)
+    # Add the prompt as positional argument
+    cmd.append(prompt)
     
-    console.print(f"[blue]Running Codex CLI (PTY mode)...[/blue]")
+    console.print(f"[blue]Running Codex CLI (quiet mode)...[/blue]")
+    console.print(f"[dim]Command: codex --quiet ... --model {model} --approval-mode {approval_mode} <prompt>[/dim]")
     
     try:
         # Set up environment
         env = os.environ.copy()
         env['CODEX_UNSAFE_ALLOW_NO_SANDBOX'] = '1'
-        # TERM can remain "xterm" style; we respond to cursor queries ourselves.
-        env.setdefault('TERM', 'xterm-256color')
         
-        # Prevent interactive editors
+        # Prevent interactive editors from spawning
         env['EDITOR'] = '/usr/bin/true'
         env['VISUAL'] = '/usr/bin/true'
         env['GIT_EDITOR'] = '/usr/bin/true'
@@ -219,9 +154,9 @@ def run_codex_cli(
         for key, value in config.get('environment', {}).items():
             env[key] = value
         
-        # Run Codex CLI - prompt is sent interactively after Codex is ready
+        # Run Codex CLI in quiet mode (simple subprocess, no PTY needed!)
         timeout = config.get('timeout_minutes', 30) * 60
-        returncode, output = _run_with_pty(cmd=cmd, cwd=workspace, env=env, timeout_seconds=timeout, prompt=prompt)
+        returncode, output = _run_codex_quiet(cmd=cmd, cwd=workspace, env=env, timeout_seconds=timeout)
         duration = time.time() - start_time
         
         if returncode != 0:
