@@ -8,6 +8,7 @@ import argparse
 import json
 import os
 import shutil
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -90,28 +91,35 @@ def run_codex_cli(
     # Add model
     cmd.extend(['--model', model])
     
-    # Pass prompt via stdin to avoid TTY requirement
-    # Don't add prompt to cmd - we'll pipe it via stdin
+    # Add the prompt as a positional argument
+    cmd.append(prompt)
     
-    console.print(f"[blue]Running: {' '.join(cmd[:5])}...[/blue]")
+    # Wrap with script to simulate TTY
+    # This is necessary because codex CLI checks for a TTY
+    inner_cmd = ' '.join(shlex.quote(arg) for arg in cmd)
+    # script -e (return exit code) -q (quiet) -c (command) "cmd" /dev/null (output file)
+    cmd = ['script', '-e', '-q', '-c', inner_cmd, '/dev/null']
+    
+    console.print(f"[blue]Running with PTY simulation...[/blue]")
     
     try:
         # Set up environment
         env = os.environ.copy()
         env['CODEX_UNSAFE_ALLOW_NO_SANDBOX'] = '1'
+        # script needs TERM variable to function properly
+        env['TERM'] = 'xterm-256color'
         
         # Add any environment variables from config
         for key, value in config.get('environment', {}).items():
             env[key] = value
         
-        # Run Codex CLI with prompt piped via stdin
+        # Run Codex CLI
         timeout = config.get('timeout_minutes', 30) * 60
         
         result = subprocess.run(
             cmd,
             cwd=workspace,
             env=env,
-            input=prompt,
             capture_output=True,
             text=True,
             timeout=timeout,
