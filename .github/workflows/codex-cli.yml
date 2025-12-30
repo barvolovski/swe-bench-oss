@@ -82,22 +82,23 @@ jobs:
           echo "XDG_CONFIG_HOME=${CODEX_HOME}" >> "${GITHUB_ENV}"
           echo "XDG_STATE_HOME=${CODEX_HOME}" >> "${GITHUB_ENV}"
 
-          # Try to authenticate in a non-interactive way. Different codex-cli builds use different flags.
-          # All commands are time-bounded to avoid hanging the job.
           export HOME="${CODEX_HOME}"
           export XDG_CONFIG_HOME="${CODEX_HOME}"
           export XDG_STATE_HOME="${CODEX_HOME}"
 
-          echo "=== attempting codex login (best-effort) ==="
-          timeout 15s codex login --api-key "${OPENAI_API_KEY}" || true
-          timeout 15s codex login --token "${OPENAI_API_KEY}" || true
-          timeout 15s codex login --access-token "${OPENAI_API_KEY}" || true
-          timeout 15s codex login --help >/dev/null 2>&1 || true
+          # The correct way to login non-interactively (per codex v0.77.0 help output):
+          #   printenv OPENAI_API_KEY | codex login --with-api-key
+          echo "=== attempting codex login (pipe method) ==="
+          printenv OPENAI_API_KEY | timeout 30s codex login --with-api-key || echo "Login failed (exit $?)"
+          
+          # Debug: show any stored credentials/config
+          echo "=== codex config directory ==="
+          ls -la "${CODEX_HOME}" || true
+          find "${CODEX_HOME}" -type f 2>/dev/null | head -20 || true
 
-          # Quick smoke test: make sure codex exec can at least start without 401.
-          # If it still 401s, the harness will show it, but this gives us earlier signal.
+          # Quick smoke test
           echo "=== codex exec smoke test ==="
-          timeout 30s codex exec --model gpt-4.1 "Say OK_FROM_CI_SMOKE_TEST" || true
+          timeout 30s codex exec --model gpt-4.1 "Say OK_FROM_CI_SMOKE_TEST" || echo "Smoke test failed (exit $?)"
 
       - name: Set up Docker
         uses: docker/setup-buildx-action@v3

@@ -147,6 +147,9 @@ def run_codex_cli(
     ]
     
     console.print(f"[blue]Running Codex CLI (exec mode)...[/blue]")
+    # Debug: print model and command
+    console.print(f"[dim]Model (repr): {repr(model)}[/dim]")
+    console.print(f"[dim]Model (len={len(model)}): {model}[/dim]")
     # Debug: print actual command (truncate prompt for readability)
     debug_cmd = cmd.copy()
     debug_cmd[-1] = "<prompt truncated>"
@@ -274,6 +277,11 @@ def main():
     parser.add_argument('--config', type=str, help='Path to config JSON file')
     parser.add_argument('--max-tasks', type=int, help='Maximum number of tasks to run')
     args = parser.parse_args()
+    
+    # Debug: print received arguments
+    console.print(f"[dim]DEBUG: args.model = {repr(args.model)}[/dim]")
+    console.print(f"[dim]DEBUG: args.dataset = {repr(args.dataset)}[/dim]")
+    console.print(f"[dim]DEBUG: args.task_ids = {repr(args.task_ids)}[/dim]")
     
     # Load config
     config = load_config(args.config)
