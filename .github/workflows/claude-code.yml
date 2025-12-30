@@ -140,8 +140,11 @@ jobs:
             cat "./eval_results/${{ steps.run_id.outputs.run_id }}/summary.json" | python -c "
           import sys, json
           data = json.load(sys.stdin)
-          print(f\"- **Resolved:** {data.get('resolved', 0)} / {data.get('total', 0)}\")
-          print(f\"- **Accuracy:** {data.get('accuracy', 0)*100:.1f}%\")
+          resolved = data.get('resolved') or 0
+          total = data.get('total') or 0
+          accuracy = data.get('accuracy') or 0
+          print(f\"- **Resolved:** {resolved} / {total}\")
+          print(f\"- **Accuracy:** {accuracy*100:.1f}%\")
           " >> $GITHUB_STEP_SUMMARY
           fi
 
