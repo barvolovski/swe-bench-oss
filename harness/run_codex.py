@@ -32,6 +32,90 @@ from utils import (
 
 console = Console()
 
+def _run_with_pty(cmd: List[str], cwd: Path, env: Dict[str, str], timeout_seconds: int) -> tuple[int, str]:
+    """
+    Run a command attached to a pseudo-terminal (PTY) and capture combined output.
+
+    Why:
+    - `codex` uses Ink (terminal UI) which expects a TTY and also sends cursor-position
+      queries (ESC[6n). In CI there is no real terminal emulator to answer those, so
+      Ink times out with:
+        "Error: The cursor position could not be read within a normal duration"
+    - By running the process on a PTY and replying with a dummy cursor position
+      response (ESC[1;1R), we satisfy Ink without needing a real terminal emulator.
+    """
+    import pty
+    import select
+
+    master_fd, slave_fd = pty.openpty()
+    start = time.time()
+    output = bytearray()
+    recent = bytearray()
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(cwd),
+            env=env,
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            text=False,
+            close_fds=True,
+        )
+    finally:
+        try:
+            os.close(slave_fd)
+        except Exception:
+            pass
+
+    try:
+        while True:
+            # Timeout handling
+            if time.time() - start > timeout_seconds:
+                proc.kill()
+                raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout_seconds)
+
+            # If process exited, drain remaining output then break
+            exited = proc.poll() is not None
+
+            rlist, _, _ = select.select([master_fd], [], [], 0.1)
+            if master_fd in rlist:
+                try:
+                    chunk = os.read(master_fd, 4096)
+                except OSError:
+                    chunk = b""
+
+                if chunk:
+                    output.extend(chunk)
+
+                    # Keep a small rolling buffer to detect escape sequences across reads
+                    recent.extend(chunk)
+                    if len(recent) > 128:
+                        recent = recent[-128:]
+
+                    # Respond to cursor position queries (ESC[6n)
+                    if b"\x1b[6n" in recent:
+                        try:
+                            os.write(master_fd, b"\x1b[1;1R")
+                        except Exception:
+                            pass
+                        # Remove occurrences so we don't spam responses
+                        recent = recent.replace(b"\x1b[6n", b"")
+
+                    continue
+
+            if exited:
+                break
+
+        returncode = proc.wait(timeout=5)
+        return returncode, output.decode("utf-8", errors="replace")
+    finally:
+        try:
+            os.close(master_fd)
+        except Exception:
+            pass
+
 
 def load_config(config_path: Optional[str]) -> Dict[str, Any]:
     """Load configuration from file."""
@@ -91,24 +175,17 @@ def run_codex_cli(
     # Add model
     cmd.extend(['--model', model])
     
-    # Add the prompt as a positional argument
+    # Add the prompt as a positional argument (codex usage: codex [OPTIONS] [PROMPT])
     cmd.append(prompt)
     
-    # Wrap with script to simulate TTY
-    # This is necessary because codex CLI checks for a TTY
-    inner_cmd = ' '.join(shlex.quote(arg) for arg in cmd)
-    # script -e (return exit code) -q (quiet) -c (command) "cmd" /dev/null (output file)
-    cmd = ['script', '-e', '-q', '-c', inner_cmd, '/dev/null']
-    
-    console.print(f"[blue]Running with PTY simulation...[/blue]")
+    console.print(f"[blue]Running Codex CLI (PTY mode)...[/blue]")
     
     try:
         # Set up environment
         env = os.environ.copy()
         env['CODEX_UNSAFE_ALLOW_NO_SANDBOX'] = '1'
-        # Use 'dumb' terminal to disable Ink's cursor position queries
-        # (Ink times out if it can't read cursor position)
-        env['TERM'] = 'dumb'
+        # TERM can remain "xterm" style; we respond to cursor queries ourselves.
+        env.setdefault('TERM', 'xterm-256color')
         
         # Prevent interactive editors
         env['EDITOR'] = '/usr/bin/true'
@@ -121,21 +198,11 @@ def run_codex_cli(
         
         # Run Codex CLI
         timeout = config.get('timeout_minutes', 30) * 60
-        
-        result = subprocess.run(
-            cmd,
-            cwd=workspace,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        
+        returncode, output = _run_with_pty(cmd=cmd, cwd=workspace, env=env, timeout_seconds=timeout)
         duration = time.time() - start_time
-        output = result.stdout + result.stderr
         
-        if result.returncode != 0:
-            console.print(f"[red]Command failed with return code {result.returncode}[/red]")
+        if returncode != 0:
+            console.print(f"[red]Command failed with return code {returncode}[/red]")
             console.print(output)
         
         # Gather the diff
@@ -162,7 +229,7 @@ def run_codex_cli(
         
         return TaskResult(
             instance_id="",  # Will be set by caller
-            success=result.returncode == 0 and bool(patch),
+            success=returncode == 0 and bool(patch),
             patch=patch,
             output=output,
             duration_seconds=duration,
