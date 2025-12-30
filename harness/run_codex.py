@@ -119,11 +119,11 @@ def run_codex_cli(
 
     # Build command using codex exec subcommand for non-interactive mode
     # Based on CI help output: "codex exec - Run Codex non-interactively"
+    # NOTE: exec subcommand only accepts: --model <MODEL> [PROMPT]
     cmd = [
         'codex',
         'exec',  # Non-interactive subcommand!
         '--model', model,
-        '--approval-mode', config.get('approval_mode', 'full-auto'),
         prompt,
     ]
     
