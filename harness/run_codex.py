@@ -119,6 +119,10 @@ def run_codex_cli(
         duration = time.time() - start_time
         output = result.stdout + result.stderr
         
+        if result.returncode != 0:
+            console.print(f"[red]Command failed with return code {result.returncode}[/red]")
+            console.print(output)
+        
         # Gather the diff
         patch = gather_diff(workspace)
         
