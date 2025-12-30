@@ -90,8 +90,8 @@ def run_codex_cli(
     # Add model
     cmd.extend(['--model', model])
     
-    # Add the prompt
-    cmd.extend(['--message', prompt])
+    # Add the prompt as a positional argument
+    cmd.append(prompt)
     
     console.print(f"[blue]Running: {' '.join(cmd[:5])}...[/blue]")
     

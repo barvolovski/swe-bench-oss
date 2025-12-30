@@ -10,7 +10,7 @@
   },
   "cli_flags": [
     "--full-auto",
-    "--dangerously-auto-approve-everything"
+    "--dangerously-bypass-approvals-and-sandbox"
   ]
 }
 

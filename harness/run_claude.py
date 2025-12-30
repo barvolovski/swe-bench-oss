@@ -93,8 +93,8 @@ def run_claude_code(
     # Add print mode for non-interactive output
     cmd.append('--print')
     
-    # Add the prompt
-    cmd.extend(['--message', prompt])
+    # Add the prompt as a positional argument
+    cmd.append(prompt)
     
     console.print(f"[blue]Running: {' '.join(cmd[:5])}...[/blue]")
     
