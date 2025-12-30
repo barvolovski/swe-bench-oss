@@ -23,6 +23,25 @@ def _strip_ansi(text: str) -> str:
     ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
     return ansi_escape.sub('', text)
 
+
+def _normalize_openai_api_key(raw: Optional[str]) -> str:
+    """
+    Normalize OPENAI_API_KEY from CI secrets.
+
+    We intentionally avoid printing the key anywhere. This function:
+    - Strips whitespace/newlines (common when secrets are copy-pasted)
+    - Removes a leading 'Bearer ' prefix if the user pasted a full Authorization header
+    - Strips surrounding quotes
+    """
+    if not raw:
+        return ""
+    key = raw.strip()
+    if key.lower().startswith("bearer "):
+        key = key.split(" ", 1)[1].strip()
+    if (key.startswith('"') and key.endswith('"')) or (key.startswith("'") and key.endswith("'")):
+        key = key[1:-1].strip()
+    return key
+
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
@@ -137,12 +156,27 @@ def run_codex_cli(
         # Set up environment
         env = os.environ.copy()
         env['CODEX_UNSAFE_ALLOW_NO_SANDBOX'] = '1'
-        
-        # Debug: verify OPENAI_API_KEY is present
-        if 'OPENAI_API_KEY' in env:
-            console.print(f"[green]OPENAI_API_KEY is set (length: {len(env['OPENAI_API_KEY'])})[/green]")
-        else:
-            console.print(f"[red]WARNING: OPENAI_API_KEY is NOT set![/red]")
+
+        # Normalize + validate OPENAI_API_KEY (do NOT print the value)
+        raw_key = env.get("OPENAI_API_KEY")
+        norm_key = _normalize_openai_api_key(raw_key)
+        env["OPENAI_API_KEY"] = norm_key
+
+        # Debug: show safe diagnostics only
+        if not norm_key:
+            console.print("[red]ERROR: OPENAI_API_KEY is missing/empty after normalization[/red]")
+            console.print("[red]Check GitHub Actions secret OPENAI_API_KEY (no quotes, no 'Bearer ' prefix)[/red]")
+            return TaskResult(
+                instance_id="",
+                success=False,
+                patch="",
+                error="OPENAI_API_KEY missing/empty after normalization",
+                duration_seconds=time.time() - start_time,
+            )
+        console.print(
+            "[green]OPENAI_API_KEY is set[/green] "
+            f"(length={len(norm_key)}, startswith_sk={norm_key.startswith('sk-')})"
+        )
         
         # Prevent interactive editors from spawning
         env['EDITOR'] = '/usr/bin/true'
