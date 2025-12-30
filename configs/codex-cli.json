@@ -9,7 +9,6 @@
     "CODEX_UNSAFE_ALLOW_NO_SANDBOX": "1"
   },
   "cli_flags": [
-    "--full-auto",
     "--dangerously-bypass-approvals-and-sandbox"
   ]
 }
