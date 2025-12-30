@@ -90,8 +90,8 @@ def run_codex_cli(
     # Add model
     cmd.extend(['--model', model])
     
-    # Add the prompt as a positional argument
-    cmd.append(prompt)
+    # Pass prompt via stdin to avoid TTY requirement
+    # Don't add prompt to cmd - we'll pipe it via stdin
     
     console.print(f"[blue]Running: {' '.join(cmd[:5])}...[/blue]")
     
@@ -104,13 +104,14 @@ def run_codex_cli(
         for key, value in config.get('environment', {}).items():
             env[key] = value
         
-        # Run Codex CLI
+        # Run Codex CLI with prompt piped via stdin
         timeout = config.get('timeout_minutes', 30) * 60
         
         result = subprocess.run(
             cmd,
             cwd=workspace,
             env=env,
+            input=prompt,
             capture_output=True,
             text=True,
             timeout=timeout,
