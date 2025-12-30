@@ -32,9 +32,9 @@ from utils import (
 
 console = Console()
 
-def _run_with_pty(cmd: List[str], cwd: Path, env: Dict[str, str], timeout_seconds: int) -> tuple[int, str]:
+def _run_with_pty(cmd: List[str], cwd: Path, env: Dict[str, str], timeout_seconds: int, prompt: str) -> tuple[int, str]:
     """
-    Run a command attached to a pseudo-terminal (PTY) and capture combined output.
+    Run Codex CLI attached to a pseudo-terminal (PTY), send prompt interactively, and capture output.
 
     Why:
     - `codex` uses Ink (terminal UI) which expects a TTY and also sends cursor-position
@@ -43,6 +43,8 @@ def _run_with_pty(cmd: List[str], cwd: Path, env: Dict[str, str], timeout_second
         "Error: The cursor position could not be read within a normal duration"
     - By running the process on a PTY and replying with a dummy cursor position
       response (ESC[1;1R), we satisfy Ink without needing a real terminal emulator.
+    - Codex CLI waits for interactive input, so we detect when it's ready and send
+      the prompt via stdin, then press Enter to submit.
     """
     import pty
     import select
@@ -51,6 +53,7 @@ def _run_with_pty(cmd: List[str], cwd: Path, env: Dict[str, str], timeout_second
     start = time.time()
     output = bytearray()
     recent = bytearray()
+    prompt_sent = False
 
     try:
         proc = subprocess.Popen(
@@ -89,10 +92,10 @@ def _run_with_pty(cmd: List[str], cwd: Path, env: Dict[str, str], timeout_second
                 if chunk:
                     output.extend(chunk)
 
-                    # Keep a small rolling buffer to detect escape sequences across reads
+                    # Keep a small rolling buffer to detect patterns
                     recent.extend(chunk)
-                    if len(recent) > 128:
-                        recent = recent[-128:]
+                    if len(recent) > 2048:
+                        recent = recent[-2048:]
 
                     # Respond to cursor position queries (ESC[6n)
                     if b"\x1b[6n" in recent:
@@ -100,8 +103,28 @@ def _run_with_pty(cmd: List[str], cwd: Path, env: Dict[str, str], timeout_second
                             os.write(master_fd, b"\x1b[1;1R")
                         except Exception:
                             pass
-                        # Remove occurrences so we don't spam responses
                         recent = recent.replace(b"\x1b[6n", b"")
+
+                    # Check if Codex is ready for input (look for common prompts)
+                    # Codex shows "send a message" or similar when ready
+                    recent_str = recent.decode("utf-8", errors="replace").lower()
+                    if not prompt_sent and ("send a message" in recent_str or 
+                                            "what would you like" in recent_str or
+                                            "how can i help" in recent_str or
+                                            # Also check for a simple prompt indicator after UI init
+                                            (time.time() - start > 3 and len(output) > 100)):
+                        # Give Codex a moment to fully initialize
+                        time.sleep(0.5)
+                        try:
+                            # Send the prompt
+                            os.write(master_fd, prompt.encode("utf-8"))
+                            time.sleep(0.2)
+                            # Press Enter to submit
+                            os.write(master_fd, b"\r")
+                            prompt_sent = True
+                            console.print(f"[green]Prompt sent ({len(prompt)} chars)[/green]")
+                        except Exception as e:
+                            console.print(f"[red]Failed to send prompt: {e}[/red]")
 
                     continue
 
@@ -175,8 +198,8 @@ def run_codex_cli(
     # Add model
     cmd.extend(['--model', model])
     
-    # Add the prompt as a positional argument (codex usage: codex [OPTIONS] [PROMPT])
-    cmd.append(prompt)
+    # Don't pass prompt as CLI arg - we'll send it interactively via PTY
+    # (Codex CLI ignores CLI prompt when in interactive/Ink mode)
     
     console.print(f"[blue]Running Codex CLI (PTY mode)...[/blue]")
     
@@ -196,9 +219,9 @@ def run_codex_cli(
         for key, value in config.get('environment', {}).items():
             env[key] = value
         
-        # Run Codex CLI
+        # Run Codex CLI - prompt is sent interactively after Codex is ready
         timeout = config.get('timeout_minutes', 30) * 60
-        returncode, output = _run_with_pty(cmd=cmd, cwd=workspace, env=env, timeout_seconds=timeout)
+        returncode, output = _run_with_pty(cmd=cmd, cwd=workspace, env=env, timeout_seconds=timeout, prompt=prompt)
         duration = time.time() - start_time
         
         if returncode != 0:
