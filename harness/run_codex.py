@@ -117,31 +117,21 @@ def run_codex_cli(
 4. When done, the changes will be collected as a git diff
 """
 
-    # Build command with -q for non-interactive mode
-    # Use npx to ensure we get the npm-installed @openai/codex
-    # IMPORTANT: Use '--' to separate npx args from codex args!
-    cmd = ['npx', '--yes', '@openai/codex', '--']
+    # Build command using codex exec subcommand for non-interactive mode
+    # Based on CI help output: "codex exec - Run Codex non-interactively"
+    cmd = [
+        'codex',
+        'exec',  # Non-interactive subcommand!
+        '--model', model,
+        '--approval-mode', config.get('approval_mode', 'full-auto'),
+        prompt,
+    ]
     
-    # CRITICAL: -q flag enables non-interactive mode (no TTY needed!)
-    # Using short form -q in case older versions don't recognize --quiet
-    cmd.append('-q')
-    
-    # Add CLI flags from config
-    for flag in config.get('cli_flags', []):
-        cmd.append(flag)
-    
-    # Add model
-    cmd.extend(['--model', model])
-
-    # Set approval mode for full automation
-    approval_mode = config.get('approval_mode', 'full-auto')
-    cmd.extend(['--approval-mode', str(approval_mode)])
-    
-    # Add the prompt as positional argument
-    cmd.append(prompt)
-    
-    console.print(f"[blue]Running Codex CLI (quiet mode)...[/blue]")
-    console.print(f"[dim]Command: codex --quiet ... --model {model} --approval-mode {approval_mode} <prompt>[/dim]")
+    console.print(f"[blue]Running Codex CLI (exec mode)...[/blue]")
+    # Debug: print actual command (truncate prompt for readability)
+    debug_cmd = cmd.copy()
+    debug_cmd[-1] = "<prompt truncated>"
+    console.print(f"[dim]Full command: {' '.join(debug_cmd)}[/dim]")
     
     try:
         # Set up environment
