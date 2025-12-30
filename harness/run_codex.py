@@ -106,8 +106,9 @@ def run_codex_cli(
         # Set up environment
         env = os.environ.copy()
         env['CODEX_UNSAFE_ALLOW_NO_SANDBOX'] = '1'
-        # script needs TERM variable to function properly
-        env['TERM'] = 'xterm-256color'
+        # Use 'dumb' terminal to disable Ink's cursor position queries
+        # (Ink times out if it can't read cursor position)
+        env['TERM'] = 'dumb'
         
         # Prevent interactive editors
         env['EDITOR'] = '/usr/bin/true'
