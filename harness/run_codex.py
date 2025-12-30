@@ -109,6 +109,11 @@ def run_codex_cli(
         # script needs TERM variable to function properly
         env['TERM'] = 'xterm-256color'
         
+        # Prevent interactive editors
+        env['EDITOR'] = '/usr/bin/true'
+        env['VISUAL'] = '/usr/bin/true'
+        env['GIT_EDITOR'] = '/usr/bin/true'
+        
         # Add any environment variables from config
         for key, value in config.get('environment', {}).items():
             env[key] = value
