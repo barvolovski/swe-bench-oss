@@ -119,9 +119,11 @@ def run_codex_cli(
 
     # Build command with -q for non-interactive mode
     # Use npx to ensure we get the npm-installed @openai/codex
-    cmd = ['npx', '--yes', '@openai/codex']
+    # IMPORTANT: Use '--' to separate npx args from codex args!
+    cmd = ['npx', '--yes', '@openai/codex', '--']
     
     # CRITICAL: -q flag enables non-interactive mode (no TTY needed!)
+    # Using short form -q in case older versions don't recognize --quiet
     cmd.append('-q')
     
     # Add CLI flags from config
