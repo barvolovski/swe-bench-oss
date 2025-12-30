@@ -160,7 +160,20 @@ def run_codex_cli(
         # Normalize + validate OPENAI_API_KEY (do NOT print the value)
         raw_key = env.get("OPENAI_API_KEY")
         norm_key = _normalize_openai_api_key(raw_key)
+        # Set several common env var names used by different Codex/OpenAI CLIs.
+        # This is safe (same secret) and improves compatibility across versions.
         env["OPENAI_API_KEY"] = norm_key
+        env.setdefault("OPENAI_API_TOKEN", norm_key)
+        env.setdefault("OPENAI_KEY", norm_key)
+        env.setdefault("CODEX_API_KEY", norm_key)
+        env.setdefault("CODEX_OPENAI_API_KEY", norm_key)
+
+        # Ensure Codex has a writable config directory (some builds store auth here).
+        # If the workflow set HOME/XDG_* already, keep those values.
+        env.setdefault("HOME", os.environ.get("HOME", ""))
+        if env.get("HOME"):
+            env.setdefault("XDG_CONFIG_HOME", env["HOME"])
+            env.setdefault("XDG_STATE_HOME", env["HOME"])
 
         # Debug: show safe diagnostics only
         if not norm_key:
