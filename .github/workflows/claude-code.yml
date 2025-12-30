@@ -1,0 +1,147 @@
+name: Run Claude Code on SWE-Bench
+
+on:
+  workflow_dispatch:
+    inputs:
+      dataset:
+        description: 'Dataset to use (pro, lite, verified)'
+        required: true
+        default: 'pro'
+        type: choice
+        options:
+          - pro
+          - lite
+          - verified
+      task_ids:
+        description: 'Comma-separated task IDs (leave empty for daily tasks)'
+        required: false
+        default: ''
+        type: string
+      max_tasks:
+        description: 'Maximum number of tasks to run'
+        required: false
+        default: '5'
+        type: string
+      model:
+        description: 'Model to use'
+        required: false
+        default: 'claude-sonnet-4-20250514'
+        type: string
+  schedule:
+    # Run daily at 14:00 UTC
+    - cron: '0 14 * * *'
+
+env:
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+jobs:
+  run-benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6 hours max
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Claude Code CLI
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          claude --version
+
+      - name: Set up Docker
+        uses: docker/setup-buildx-action@v3
+
+      - name: Generate run ID
+        id: run_id
+        run: |
+          RUN_ID="claude-code-$(date -u +%Y-%m-%dT%H-%M-%S)"
+          echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
+          echo "Run ID: $RUN_ID"
+
+      - name: Determine tasks to run
+        id: tasks
+        run: |
+          if [ -n "${{ github.event.inputs.task_ids }}" ]; then
+            echo "task_ids=${{ github.event.inputs.task_ids }}" >> $GITHUB_OUTPUT
+          else
+            # Load daily tasks from config
+            DATASET="${{ github.event.inputs.dataset || 'pro' }}"
+            MAX_TASKS="${{ github.event.inputs.max_tasks || '5' }}"
+            TASKS=$(python -c "
+          from datasets import load_dataset
+          import json
+          dataset_map = {'pro': 'ScaleAI/SWE-bench_Pro', 'lite': 'princeton-nlp/SWE-bench_Lite', 'verified': 'princeton-nlp/SWE-bench_Verified'}
+          ds = load_dataset(dataset_map['$DATASET'], split='test')
+          ids = [row['instance_id'] for row in ds][:$MAX_TASKS]
+          print(','.join(ids))
+          ")
+            echo "task_ids=$TASKS" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run Claude Code harness
+        run: |
+          python harness/run_claude.py \
+            --task-ids "${{ steps.tasks.outputs.task_ids }}" \
+            --dataset "${{ github.event.inputs.dataset || 'pro' }}" \
+            --model "${{ github.event.inputs.model || 'claude-sonnet-4-20250514' }}" \
+            --output "./preds/${{ steps.run_id.outputs.run_id }}" \
+            --config ./configs/claude-code.json
+
+      - name: Upload predictions
+        uses: actions/upload-artifact@v4
+        with:
+          name: preds-${{ steps.run_id.outputs.run_id }}
+          path: ./preds/${{ steps.run_id.outputs.run_id }}
+          retention-days: 30
+
+      - name: Run evaluation
+        if: success()
+        run: |
+          python eval/run_eval.py \
+            --preds "./preds/${{ steps.run_id.outputs.run_id }}" \
+            --dataset "${{ github.event.inputs.dataset || 'pro' }}" \
+            --output "./eval_results/${{ steps.run_id.outputs.run_id }}"
+
+      - name: Upload evaluation results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-${{ steps.run_id.outputs.run_id }}
+          path: ./eval_results/${{ steps.run_id.outputs.run_id }}
+          retention-days: 30
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Claude Code Benchmark Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Run ID:** ${{ steps.run_id.outputs.run_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Dataset:** ${{ github.event.inputs.dataset || 'pro' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Model:** ${{ github.event.inputs.model || 'claude-sonnet-4-20250514' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f "./eval_results/${{ steps.run_id.outputs.run_id }}/summary.json" ]; then
+            echo "### Results" >> $GITHUB_STEP_SUMMARY
+            cat "./eval_results/${{ steps.run_id.outputs.run_id }}/summary.json" | python -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          print(f\"- **Resolved:** {data.get('resolved', 0)} / {data.get('total', 0)}\")
+          print(f\"- **Accuracy:** {data.get('accuracy', 0)*100:.1f}%\")
+          " >> $GITHUB_STEP_SUMMARY
+          fi
+

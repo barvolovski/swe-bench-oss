@@ -1,0 +1,82 @@
+name: Evaluate Predictions
+
+on:
+  workflow_dispatch:
+    inputs:
+      preds_artifact:
+        description: 'Predictions artifact name (from previous run)'
+        required: true
+        type: string
+      dataset:
+        description: 'Dataset to evaluate against'
+        required: true
+        default: 'pro'
+        type: choice
+        options:
+          - pro
+          - lite
+          - verified
+      run_id:
+        description: 'Workflow run ID containing the artifact'
+        required: true
+        type: string
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Download predictions artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ github.event.inputs.preds_artifact }}
+          path: ./preds
+          run-id: ${{ github.event.inputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run evaluation
+        run: |
+          python eval/run_eval.py \
+            --preds ./preds \
+            --dataset "${{ github.event.inputs.dataset }}" \
+            --output ./eval_results
+
+      - name: Upload evaluation results
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-${{ github.event.inputs.preds_artifact }}
+          path: ./eval_results
+          retention-days: 30
+
+      - name: Summary
+        run: |
+          echo "## Evaluation Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Predictions:** ${{ github.event.inputs.preds_artifact }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Dataset:** ${{ github.event.inputs.dataset }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f "./eval_results/summary.json" ]; then
+            echo "### Results" >> $GITHUB_STEP_SUMMARY
+            cat "./eval_results/summary.json" | python -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          print(f\"- **Resolved:** {data.get('resolved', 0)} / {data.get('total', 0)}\")
+          print(f\"- **Accuracy:** {data.get('accuracy', 0)*100:.1f}%\")
+          " >> $GITHUB_STEP_SUMMARY
+          fi
+

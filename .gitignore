@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+env/
+
+# Generated outputs
+preds/
+preds_*/
+eval_results/
+eval_results_*/
+*.pred
+*_gathered.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Local config overrides
+config.local.json
+.env
+.env.*
+

@@ -1,0 +1,20 @@
+# SWE-Bench OSS Harness Dependencies
+
+# Core
+datasets>=2.14.0
+pandas>=2.0.0
+requests>=2.31.0
+
+# Docker SDK for container management
+docker>=6.1.0
+
+# CLI utilities
+click>=8.1.0
+rich>=13.0.0
+
+# Evaluation
+modal>=0.56.0
+
+# Development
+python-dotenv>=1.0.0
+

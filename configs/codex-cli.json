@@ -1,0 +1,16 @@
+{
+  "model": "gpt-4.1",
+  "approval_mode": "full-auto",
+  "sandbox": "docker",
+  "timeout_minutes": 30,
+  "max_turns": 50,
+  "writable_roots": ["/workspace"],
+  "environment": {
+    "CODEX_UNSAFE_ALLOW_NO_SANDBOX": "1"
+  },
+  "cli_flags": [
+    "--full-auto",
+    "--dangerously-auto-approve-everything"
+  ]
+}
+
